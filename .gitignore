@@ -1,0 +1,15 @@
+# Archivos de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Carpetas ignoradas
+catboost_info/
+exported_best_model/
+distribucionDatos/
+resultadosML/
+
+# Archivos temporales
+*.tmp
+*.log
+.DS_Store
