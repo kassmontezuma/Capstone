@@ -1,0 +1,24 @@
+{
+  "model_name": "LogisticRegression",
+  "threshold": 0.1,
+  "accuracy": 0.872,
+  "precision": 0.8052516411378556,
+  "recall": 0.9041769041769042,
+  "f1": 0.8518518518518519,
+  "auc": 0.9217446789116266,
+  "training_date": "2026-05-30T21:23:23.771728",
+  "features_count": 27,
+  "scaler_mean": [
+    94.97325773971751
+  ],
+  "scaler_scale": [
+    1.46960604896435
+  ],
+  "top5_features": [
+    "SMOKING",
+    "ENERGY_LEVEL",
+    "THROAT_DISCOMFORT",
+    "BREATHING_ISSUE",
+    "OXYGEN_SATURATION"
+  ]
+}

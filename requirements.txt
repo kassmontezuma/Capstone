@@ -1,0 +1,14 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+scikit-learn==1.4.2
+joblib==1.4.0
+numpy==1.26.4
+pandas==2.2.2
+Pillow==10.3.0
+streamlit==1.35.0
+requests==2.32.2
+shap==0.45.0
+# tensorflow==2.16.1
+# torch==2.3.0
+# torchvision==0.18.0
