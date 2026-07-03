@@ -1,259 +1,252 @@
 import io
+import os
+import base64
 import json
-import logging
-import random
-from pathlib import Path
-
+import cv2
 import numpy as np
-import pandas as pd
 import joblib
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import torchvision.transforms as transforms
 from PIL import Image
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import matplotlib.pyplot as plt
+import shap
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 
+app = FastAPI(title="Lung Cancer Hybrid Diagnostic System")
 
-# Configuración inicial
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-logger = logging.getLogger(__name__)
+# ------------------------------------------------------------
+# 1. CARGA DEL MODELO ML (joblib)
+# ------------------------------------------------------------
+ML_DIR = "backend/exported_best_model"
+ml_model = joblib.load(os.path.join(ML_DIR, "model.joblib"))
+scaler = joblib.load(os.path.join(ML_DIR, "scaler.joblib"))
+with open(os.path.join(ML_DIR, "feature_names.json"), "r") as f:
+    feature_names = json.load(f)
 
-BASE_DIR = Path(__file__).parent
-MODEL_DIR = BASE_DIR / "exported_best_model"
+# ------------------------------------------------------------
+# 2. ARQUITECTURA CORRECTA: ResNet18 + LSTM
+# ------------------------------------------------------------
+class ResNet18LSTM(nn.Module):
+    def __init__(self, lstm_hidden=128, num_layers=1, num_classes=1):
+        super().__init__()
+        resnet = models.resnet18(weights=None)
+        # Quitamos AvgPool y FC, dejamos los mapas de características (14x14)
+        self.features = nn.Sequential(*list(resnet.children())[:-2])
+        self.lstm = nn.LSTM(
+            input_size=512,
+            hidden_size=lstm_hidden,
+            num_layers=num_layers,
+            batch_first=True,
+        )
+        self.classifier = nn.Linear(lstm_hidden, num_classes)
+        self.sigmoid = nn.Sigmoid()
 
-# Variables globales para artefactos
-model = None
-scaler = None
-feature_names = None
-feature_means = None
+    def forward(self, x):
+        # x: (B,3,H,W) -> features: (B,512, H_f, W_f)
+        B, C, H, W = self.features(x).shape
+        x = self.features(x).view(B, C, H * W)   # (B, 512, L)
+        x = x.permute(0, 2, 1)                   # (B, L, 512)
+        lstm_out, (h_n, _) = self.lstm(x)
+        last_hidden = h_n[-1]                    # (B, hidden)
+        out = self.classifier(last_hidden)
+        return self.sigmoid(out).squeeze(1)
 
-DL_AVAILABLE = False                # Cambiar a true cuando lo tenga
-ML_WEIGHT = 1.0                     # Peso de ML mientras no tengo DL
-DL_WEIGHT = 0.0                     # Peso de DL hasta que lo tenga
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+dl_model = ResNet18LSTM().to(DEVICE)
+DL_PATH = "backend/best_ResNet18+LSTM.pth"
+if os.path.exists(DL_PATH):
+    dl_model.load_state_dict(torch.load(DL_PATH, map_location=DEVICE))
+dl_model.eval()
 
-# Orden de variables ML
-FEATURE_ORDER = [
-  "AGE", "GENDER", "SMOKING", "FINGER_DISCOLORATION", "MENTAL_STRESS",
-  "EXPOSURE_TO_POLLUTION", "LONG_TERM_ILLNESS", "ENERGY_LEVEL",
-  "IMMUNE_WEAKNESS", "BREATHING_ISSUE", "ALCOHOL_CONSUMPTION",
-  "THROAT_DISCOMFORT", "OXYGEN_SATURATION", "CHEST_TIGHTNESS",
-  "FAMILY_HISTORY", "SMOKING_FAMILY_HISTORY", "STRESS_IMMUNE"
-]
+# ------------------------------------------------------------
+# 3. GRAD‑CAM
+# ------------------------------------------------------------
+class GradCAM:
+    def __init__(self, model, target_layer):
+        self.model = model
+        self.target_layer = target_layer
+        self.activations = None
+        self.gradients = None
+        target_layer.register_forward_hook(self.save_activation)
+        target_layer.register_full_backward_hook(self.save_gradient)
 
-TOP5 = ["SMOKING", "ENERGY_LEVEL", "THROAT_DISCOMFORT", "BREATHING_ISSUE", "OXYGEN_SATURATION"]
+    def save_activation(self, module, input, output):
+        self.activations = output.detach()
 
-INTERACTION_PAIRS = [
-  ("SMOKING", "ENERGY_LEVEL"),
-  ("SMOKING", "THROAT_DISCOMFORT"),
-  ("SMOKING", "BREATHING_ISSUE"),
-  ("SMOKING", "OXYGEN_SATURATION"),
-  ("ENERGY_LEVEL", "THROAT_DISCOMFORT"),
-  ("ENERGY_LEVEL", "BREATHING_ISSUE"),
-  ("ENERGY_LEVEL", "OXYGEN_SATURATION"),
-  ("THROAT_DISCOMFORT", "BREATHING_ISSUE"),
-  ("THROAT_DISCOMFORT", "OXYGEN_SATURATION"),
-  ("BREATHING_ISSUE", "OXYGEN_SATURATION"),
-]
+    def save_gradient(self, module, grad_in, grad_out):
+        self.gradients = grad_out[0].detach()
 
-# Cargar modelo ML, scaler y nombres de features
-def load_artifacts():
-  global model, scaler, feature_names, feature_means
+    def __call__(self, x, class_idx=None):
+        self.model.zero_grad()
+        output = self.model(x)
+        if output.dim() == 1:
+            loss = output[0]
+        else:
+            loss = output[0, class_idx] if class_idx is not None else output[0, output.argmax().item()]
+        loss.backward()
+        weights = torch.mean(self.gradients, dim=(2, 3), keepdim=True)
+        cam = torch.sum(weights * self.activations, dim=1, keepdim=True)
+        cam = torch.relu(cam)
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+        return cam.squeeze().cpu().numpy()
 
-  try:
-    model = joblib.load(MODEL_DIR / "model.joblib")
-    logger.info("Modelo ML cargado")
-  except FileNotFoundError:
-    logger.warning("model.joblib no encontrado. Se usará simulación.")
+target_layer = dl_model.features[-1]   # Última capa de layer4
+grad_cam = GradCAM(dl_model, target_layer)
 
-  try:
-    scaler = joblib.load(MODEL_DIR / "scaler.joblib")
-    logger.info("Scaler cargado")
-  except FileNotFoundError:
-    logger.warning("scaler.joblib no encontrado.")
+# ------------------------------------------------------------
+# 4. UTILIDADES
+# ------------------------------------------------------------
+def preprocess_ct(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    orig = np.array(image)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    tensor = transform(image).unsqueeze(0).to(DEVICE)
+    return orig, tensor
 
-  try:
-    with open(MODEL_DIR / "feature_names.json") as f:
-      feature_names = json.load(f)
-    logger.info(f"feature_names.json cargado ({len(feature_names)} features).")
-  except FileNotFoundError:
-    logger.warning("feature_names.json no encontrado. Se asumirán 28 features por defecto.")
-    feature_names = TOP5 + [f"{a}_x_{b}" for a, b in INTERACTION_PAIRS] + \
-                        [col for col in FEATURE_ORDER if col not in TOP5] + ["DUMMY_PADDING"]
-    
-  try:
-    with open(MODEL_DIR / "feature_means.json") as f:
-      feature_means = json.load(f)
-    logger.info("feature_means.json cargado (SHAP analítico).")
-  except FileNotFoundError:
-    logger.warning("feature_means.json no encontrado. No se calcularán valores SHAP.")
-    feature_means = None
-    
+def compute_shap(ml_model, scaler, feature_vector):
+    """feature_vector: dict con las 17 variables, en el orden correcto"""
+    ordered = ["AGE", "GENDER", "SMOKING", "FINGER_DISCOLORATION", "MENTAL_STRESS",
+               "EXPOSURE_TO_POLLUTION", "LONG_TERM_ILLNESS", "ENERGY_LEVEL",
+               "IMMUNE_WEAKNESS", "BREATHING_ISSUE", "ALCOHOL_CONSUMPTION",
+               "THROAT_DISCOMFORT", "OXYGEN_SATURATION", "CHEST_TIGHTNESS",
+               "FAMILY_HISTORY", "SMOKING_FAMILY_HISTORY", "STRESS_IMMUNE"]
+    X = np.array([[feature_vector[k] for k in ordered]])
+    X_scaled = scaler.transform(X)
 
-# Construye Dataframe de 28 features a partir de 16 valores crudos
-def preprocess_hybrid_input(raw:dict) -> pd.DataFrame:
-  df = pd.DataFrame([raw], columns=FEATURE_ORDER)
+    # Intentar TreeExplainer (modelos de árboles)
+    try:
+        explainer = shap.TreeExplainer(ml_model)
+        shap_vals = explainer.shap_values(X_scaled)
+        if isinstance(shap_vals, list):
+            shap_vals = shap_vals[1]  # clase positiva
+    except:
+        # Fallback a KernelExplainer
+        def predict_fn(x):
+            return ml_model.predict_proba(x)[:, 1]
+        background = np.random.randn(100, X_scaled.shape[1])
+        explainer = shap.KernelExplainer(predict_fn, background, link="logit")
+        shap_vals = explainer.shap_values(X_scaled, nsamples=200)
 
-  # Interacciones de las 5 principales
-  for a, b in INTERACTION_PAIRS:
-        df[f"{a}_x_{b}"] = df[a] * df[b]
+    expected = explainer.expected_value
+    if isinstance(expected, list):
+        expected = expected[1]
 
-  # Añadir columna dummy de padding
-  df["DUMMY_PADDING"] = 0.0
+    plt.figure()
+    shap.plots.waterfall(
+        shap.Explanation(values=shap_vals[0],
+                         base_values=expected,
+                         data=X_scaled[0],
+                         feature_names=ordered),
+        max_display=10,
+        show=False,
+    )
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format="png", dpi=150)
+    plt.close()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
 
-  # Escalar columnas que involucran variables continuas
-  if scaler is not None:
-      cols_to_scale = [c for c in df.columns if "ENERGY_LEVEL" in c or "OXYGEN_SATURATION" in c]
-      df[cols_to_scale] = scaler.transform(df[cols_to_scale])
-  else:
-      logger.warning("Scaler no disponible, no se aplica normalización.")
+def compute_gradcam_overlay(original_np, cam):
+    cam_resized = cv2.resize(cam, (original_np.shape[1], original_np.shape[0]))
+    heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    overlay = cv2.addWeighted(original_np, 0.6, heatmap, 0.4, 0)
+    pil_img = Image.fromarray(overlay)
+    buf = io.BytesIO()
+    pil_img.save(buf, format="PNG")
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
 
-  # Reordenar para que coincida con el orden esperado por el modelo
-  if feature_names is not None:
-      for col in feature_names:
-          if col not in df.columns:
-              df[col] = 0.0
-      df = df[feature_names]
-  return df
-
-
-# Cálculo de SHAP
-def compute_shap_values_linear(X_df: pd.DataFrame) -> dict:
-    
-  if model is None or feature_means is None:
-      return None
-
-  coefs = model.coef_[0] 
-  features = X_df.columns.tolist()
-  x_vals = X_df.iloc[0].values
-
-  mean_vals = np.array([feature_means.get(col, 0.0) for col in features])
-
-  shap_vals = (x_vals - mean_vals) * coefs
-
-  # Convertir a diccionario ordenado por magnitud
-  contributions = []
-  for i, col in enumerate(features):
-      contributions.append({"feature": col, "contribucion": round(shap_vals[i], 4)})
-
-  # Ordenar por contribución absoluta
-  contributions.sort(key=lambda x: abs(x["contribucion"]), reverse=True)
-
-  # Separar top positivas y negativas
-  top_pos = [c for c in contributions if c["contribucion"] > 0][:5]
-  top_neg = [c for c in contributions if c["contribucion"] < 0][:5]
-
-  return {
-      "metodo": "SHAP (lineal)",
-      "valor_base": 0.0,
-      "top_positivas": top_pos,
-      "top_negativas": top_neg,
-  }
-
-
-
-# Predecir DL (mejorar a futuro)
-def predict_dl_placeholder(image_bytes: bytes) -> float:
-  img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-  img = img.resize((224, 224))
-  _ = np.array(img) / 255.0
-  logger.info("DL placeholder: imagen válida, se devuelve 0.5.")
-  gradcam_info = {
-     "disponible": False,
-     "mensaje": "Mapa de atención no disponible"
-  }
-  return 0.5, gradcam_info
-
-
-
-# App de FastAPI
-app = FastAPI(
-   title="Diagnóstico Híbrido de Cancer de Pulmón",
-   description="API que combina modelo ML y DL",
-   version="2.0.0"
-)
-
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-
-@app.on_event("startup")
-async def startup():
-   load_artifacts()
-
-# Devuelve estado de modelos y métricas
-@app.get("/")
-def health_check():
-  return {
-    "status": "ok",
-    "modelo_ml": "cargado" if model is not None else "simulado",
-    "modelo_dl": "disponible" if DL_AVAILABLE else "placeholder (fase 2)",
-    "shap_disponible": feature_means is not None,
-    "metricas": {
-       "recall": 0.9042,
-       "auc": 0.9217,
-       "nota": "Entrenado con 5000 registros"
-    }
-  }
-
-# Predice diagnóstico
+# ------------------------------------------------------------
+# 5. ENDPOINT
+# ------------------------------------------------------------
 @app.post("/predict")
 async def predict(
-  clinical_data: str = Form(..., description="JSON con 17 variables clínicas"),
-  tomografia: UploadFile = File(..., description="Imagen de tomografía (PNG, JPG, JPEG)")
+    age: float = Form(...),
+    gender: int = Form(...),
+    smoking: int = Form(...),
+    finger_discoloration: int = Form(...),
+    mental_stress: int = Form(...),
+    exposure_to_pollution: int = Form(...),
+    long_term_illness: int = Form(...),
+    energy_level: float = Form(...),
+    immune_weakness: int = Form(...),
+    breathing_issue: int = Form(...),
+    alcohol_consumption: int = Form(...),
+    throat_discomfort: int = Form(...),
+    oxygen_saturation: float = Form(...),
+    chest_tightness: int = Form(...),
+    family_history: int = Form(...),
+    smoking_family_history: int = Form(...),
+    file: UploadFile = File(...),
 ):
-  # Parsear datos clínicos
-  try:
-      raw = json.loads(clinical_data)
-      if set(raw.keys()) != set(FEATURE_ORDER):
-          raise ValueError("El JSON no contiene exactamente las 17 variables clínicas esperadas.")
-  except Exception as e:
-      raise HTTPException(status_code=400, detail=f"Datos clínicos inválidos: {str(e)}")
+    # Cálculo interno de STRESS_IMMUNE
+    stress_immune = 1 if (mental_stress == 1 and immune_weakness == 1) else 0
 
-  # Preprocesar datos clínicos
-  try:
-      X_processed = preprocess_hybrid_input(raw)
-  except Exception as e:
-      logger.error(f"Error en preprocesamiento ML: {e}")
-      raise HTTPException(status_code=500, detail="Error en el preprocesamiento de los datos clínicos.")
+    features = {
+        "AGE": age,
+        "GENDER": gender,
+        "SMOKING": smoking,
+        "FINGER_DISCOLORATION": finger_discoloration,
+        "MENTAL_STRESS": mental_stress,
+        "EXPOSURE_TO_POLLUTION": exposure_to_pollution,
+        "LONG_TERM_ILLNESS": long_term_illness,
+        "ENERGY_LEVEL": energy_level,
+        "IMMUNE_WEAKNESS": immune_weakness,
+        "BREATHING_ISSUE": breathing_issue,
+        "ALCOHOL_CONSUMPTION": alcohol_consumption,
+        "THROAT_DISCOMFORT": throat_discomfort,
+        "OXYGEN_SATURATION": oxygen_saturation,
+        "CHEST_TIGHTNESS": chest_tightness,
+        "FAMILY_HISTORY": family_history,
+        "SMOKING_FAMILY_HISTORY": smoking_family_history,
+        "STRESS_IMMUNE": stress_immune,
+    }
 
-  # Predicción ML
-  if model is not None:
-      prob_ml = float(model.predict_proba(X_processed)[0, 1])
-  else:
-      logger.warning("Modelo ML no disponible, usando probabilidad aleatoria simulada.")
-      prob_ml = round(random.uniform(0.3, 0.8), 4)
-  
-  # SHAP
-  shap_info = None
-  if model is not None and feature_means is not None:
-    try:
-      shap_info = compute_shap_values_linear(X_processed)
-    except Exception as e:
-       logger.error(f"Error calculando SHAP: {e}")
-  
-  # Predicción DL (GRAD-CAM FUTURO)
-  try:
-      img_bytes = await tomografia.read()
-      prob_dl, gradcam_info = predict_dl_placeholder(img_bytes)
-  except Exception as e:
-      raise HTTPException(status_code=400, detail=f"Error en la imagen: {str(e)}")
+    # ML
+    ordered_keys = list(features.keys())
+    X_ml = np.array([[features[k] for k in ordered_keys]])
+    X_scaled = scaler.transform(X_ml)
+    prob_ml = ml_model.predict_proba(X_scaled)[0, 1]
 
-  # Combinación
-  if DL_AVAILABLE:
-      riesgo = ML_WEIGHT * prob_ml + DL_WEIGHT * prob_dl
-  else:
-      riesgo = prob_ml
+    # DL
+    image_bytes = await file.read()
+    original_np, img_tensor = preprocess_ct(image_bytes)
+    with torch.no_grad():
+        prob_dl = dl_model(img_tensor).item()
 
-  clasificacion = "Alto riesgo" if riesgo >= 0.5 else "Bajo riesgo"
+    # Fusión
+    prob_final = 0.5 * prob_ml + 0.5 * prob_dl
+    if prob_final < 0.5:
+        risk_level, risk_color = "Bajo Riesgo de cáncer de pulmón. Se recomienda seguimiento rutinario y control preventivo.", "verde"
+    elif 0.5 <= prob_final <= 0.7:
+        risk_level, risk_color = "Riesgo Moderado de cáncer de pulmón. Se recomienda evaluación médica adicional, pruebas complementarias y seguimiento cercano.", "amarillo"
+    else:
+        risk_level, risk_color = "Alta probabilidad de cáncer de pulmón. Se recomienda atención atención médica urgente, estudios diagnósticos avanzados y valoración por especialista.", "rojo"
 
-  return {
-      "probabilidad_ml": round(prob_ml, 4),
-      "probabilidad_dl": round(prob_dl, 4),
-      "riesgo_final": round(riesgo, 4),
-      "clasificacion": clasificacion,
-      "dl_disponible": DL_AVAILABLE,
-      "pesos_usados": {"ml": ML_WEIGHT if DL_AVAILABLE else 1.0, "dl": DL_WEIGHT if DL_AVAILABLE else 0.0},
-      "shap": shap_info,
-      "gradcam": gradcam_info,
-  }
+    # Explicabilidad
+    shap_b64 = compute_shap(ml_model, scaler, features)
+    cam = grad_cam(img_tensor)
+    gradcam_b64 = compute_gradcam_overlay(original_np, cam)
 
+    return JSONResponse({
+        "prob_ml": float(prob_ml),
+        "prob_dl": float(prob_dl),
+        "prob_final": float(prob_final),
+        "risk_level": risk_level,
+        "risk_color": risk_color,
+        "shap_b64": shap_b64,
+        "gradcam_b64": gradcam_b64,
+    })
 
 if __name__ == "__main__":
     import uvicorn

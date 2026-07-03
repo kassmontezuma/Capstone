@@ -4,3 +4,8 @@ __pycache__/
 venv/
 node_modules/
 .DS_Store
+
+# Modelos y artefactos ML/DL
+backend/exported_best_model/
+*.pth
+*.pt

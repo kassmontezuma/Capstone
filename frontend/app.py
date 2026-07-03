@@ -1,233 +1,268 @@
-import json
 import streamlit as st
 import requests
-import pandas as pd
 
-BACKEND_URL = "http://localhost:8000/predict"
-BACKEND_STATUS_URL = "http://localhost:8000/"
+st.set_page_config(page_title="Diagnóstico Híbrido de Cáncer de Pulmón", layout="wide")
 
-# Configuración de la página
-st.set_page_config(page_title="Diagnóstico Híbrido - Cáncer de Pulmón", page_icon="🫁", layout="wide")
-
-
-# Estilo CSS
+# ---------------------------------------------
+# CSS GLOBAL – Tema azul/celeste + blanco
+# ---------------------------------------------
 st.markdown("""
 <style>
-.section-header {
-    background: linear-gradient(90deg, #1a5276, #2980b9);
-    color: white; padding: 0.5rem 1rem; border-radius: 6px;
-    margin-bottom: 1rem; font-weight: 600;
+
+/* Fondo */
+.stApp {
+    background: linear-gradient(135deg, #0f2a44, #1e5f9e);
+    color: white;
+    font-family: 'Segoe UI', sans-serif;
 }
-.result-card {
-    background: white; border-radius: 12px; padding: 1.5rem;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center;
+
+/* Header */
+.main-title {
+    font-size: 40px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 5px;
 }
-.badge {
-    background: #f0f0f0; border-radius: 4px; padding: 0.1rem 0.4rem;
-    font-size: 0.85rem; font-weight: 600;
+
+.subtitle {
+    text-align: center;
+    color: #cfe8ff;
+    margin-bottom: 10px;
 }
+
+/* Línea */
+hr {
+    border: none;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #4da6ff, transparent);
+    margin: 10px 0;
+}
+
+/* Inputs */
+.stNumberInput input {
+    background-color: white;
+    color: black;
+    border-radius: 8px;
+}
+
+/* Radios */
+div[role="radiogroup"] {
+    background: rgba(255,255,255,0.05);
+    padding: 8px;
+    border-radius: 10px;
+}
+
+/* File uploader FIX */
+[data-testid="stFileUploader"] label {
+    display: block !important;
+    color: white !important;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+[data-testid="stFileUploadDropzone"] {
+    border: 2px dashed #4da6ff;
+    border-radius: 12px;
+    padding: 25px;
+    background: rgba(255,255,255,0.05);
+}
+
+[data-testid="stFileUploadDropzone"]:hover {
+    background: rgba(77,166,255,0.1);
+}
+
+/* Botón */
+.stButton button {
+    background: linear-gradient(90deg, #4da6ff, #1e90ff);
+    color: white;
+    border-radius: 10px;
+    height: 50px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+}
+
+.stButton button:hover {
+    background: linear-gradient(90deg, #1e90ff, #4da6ff);
+}
+
+/* Cards */
+.metric-card {
+    background: rgba(255,255,255,0.08);
+    padding: 20px;
+    border-radius: 15px;
+    text-align: center;
+    backdrop-filter: blur(6px);
+    box-shadow: 0px 4px 15px rgba(0,0,0,0.2);
+}
+
+.metric-value {
+    font-size: 32px;
+    font-weight: bold;
+}
+
+.card-green { border: 2px solid #00c853; }
+.card-yellow { border: 2px solid #ffd600; }
+.card-red { border: 2px solid #ff5252; }
+
+/* Imágenes */
+.explain-img {
+    background: white;
+    padding: 10px;
+    border-radius: 10px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 
-# Sidebar
-with st.sidebar:
-    st.image("https://img.icons8.com/color/96/lungs.png", width=80)
-    st.title("Sistema Híbrido")
+# ---------------------------------------------
+# HEADER
+# ---------------------------------------------
+st.markdown('<div class="main-title">Diagnóstico Híbrido de Cáncer de Pulmón</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Sistema clínico para la detección temprana de cáncer de pulmón</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("""
-    ** Cómo usar **
-    1. Complete los datos clínicos.
-    2. Cargue la tomografía.
-    3. Presione **Predicir Riesgo**.
-    """)
-    st.markdown("---")
-    st.caption("Herramienta de apoyo clínico. No sustituye el diagnóstico médico.")
+st.markdown("---")
 
-
-# Título principal
-st.title("Diagnóstico Híbrido de Cáncer de Pulmón")
-st.markdown("Complete los datos del paciente y cargue la tomografía para estimar el riesgo.")
+# ---------------------------------------------
+# FORMULARIO
+# ---------------------------------------------
+st.header("Datos Clínicos del Paciente")
+st.markdown("Ingrese los datos y síntomas del paciente")
 
 
-# Formulario de datos clínicos
-st.markdown('<div class="section-header">Variables Clínicas</div>', unsafe_allow_html=True)
-col1, col2, col3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 
-with col1:
-    st.markdown("**Datos generales**")
-    age = st.number_input("Edad", 0, 120, 55, help="Edad en años")
-    gender = st.radio("Género", ["M", "F"], horizontal=True, index=0)
-    smoking = st.radio("Tabaquismo", options=[0, 1], format_func=lambda x: "Sí" if x else "No",
-                       horizontal=True, help="¿El paciente fuma actualmente?")
-    smoking_family = st.radio("Familiares fumadores", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                              horizontal=True)
-    family_history = st.radio("Antecedentes familiares de cáncer", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                              horizontal=True)
-    alcohol = st.radio("Consumo de alcohol", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                       horizontal=True)
+with c1:
+    age = st.number_input("Edad", 18, 120, 50)
+    gender = st.radio("Género", ["Femenino", "Masculino"], horizontal=True)
+    gender_val = 0 if gender == "Femenino" else 1
+    smoking = st.radio("Fuma", ["No", "Sí"], horizontal=True)
+    finger = st.radio("Decoloración de dedos", ["No", "Sí"], horizontal=True)
 
-with col2:
-    st.markdown("**Síntomas respiratorios**")
-    breathing = st.radio("Problemas respiratorios", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                         horizontal=True, help="Dificultad para respirar en reposo o esfuerzo")
-    throat = st.radio("Molestia en la garganta", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                      horizontal=True)
-    chest = st.radio("Opresión en el pecho", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                     horizontal=True)
-    finger = st.radio("Decoloración de dedos", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                      horizontal=True, help="¿Presenta cianosis o cambios de color?")
-    oxygen = st.number_input("Saturación O₂ (%)", 50.0, 100.0, 98.0, 0.1,
-                             help="Saturación de oxígeno medida con oxímetro")
-    energy = st.number_input("Nivel de energía (0-10)", 0.0, 10.0, 6.0, 0.1,
-                             help="Escala subjetiva: 0 = muy bajo, 10 = muy alto")
+with c2:
+    stress = st.radio("Estrés mental", ["No", "Sí"], horizontal=True)
+    pollution = st.radio("Exposición a contaminación", ["No", "Sí"], horizontal=True)
+    illness = st.radio("Enfermedad crónica", ["No", "Sí"], horizontal=True)
+    energy = st.radio("Bajo nivel de energía", ["No", "Sí"], horizontal=True)
 
-with col3:
-    st.markdown("**Estado general y riesgos**")
-    stress = st.radio("Estrés mental", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                      horizontal=True)
-    immune = st.radio("Debilidad del sistema inmune", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                      horizontal=True)
-    chronic = st.radio("Enfermedad de larga duración", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                       horizontal=True)
-    pollution = st.radio("Exposición a contaminación", [0, 1], format_func=lambda x: "Sí" if x else "No",
-                         horizontal=True)
+with c3:
+    immune = st.radio("Debilidad inmunológica", ["No", "Sí"], horizontal=True)
+    breathing = st.radio("Dificultad respiratoria", ["No", "Sí"], horizontal=True)
+    alcohol = st.radio("Consumo de alcohol", ["No", "Sí"], horizontal=True)
+    throat = st.radio("Malestar de garganta", ["No", "Sí"], horizontal=True)
 
+with c4:
+    oxygen = st.number_input("Saturación O₂ (%)", 50.0, 100.0, 98.0)
+    chest = st.radio("Opresión en el pecho", ["No", "Sí"], horizontal=True)
+    family = st.radio("Historial familiar", ["No", "Sí"], horizontal=True)
+    fam_smoke = st.radio("Fumador pasivo familiar", ["No", "Sí"], horizontal=True)
 
-# Carga de imagen
-st.markdown('<div class="section-header">Tomografía</div>', unsafe_allow_html=True)
-uploaded_file = st.file_uploader("Cargar tomografía (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"],
-                                 help="Asegúrese de cargar una tomografía de tórax.")
-if uploaded_file:
-    st.image(uploaded_file, caption="Vista previa", width=300)
+# ---------------------------------------------
+# 🫁 TOMOGRAFÍA
+# ---------------------------------------------
+st.markdown("---")
+st.header("Tomografía Computarizada")
 
+ct_file = st.file_uploader(
+    "Seleccione la imagen de la tomografía",
+    type=["png", "jpg", "jpeg"]
+)
 
-# Botón de predicción
-predict_btn = st.button("Predecir Riesgo", type="primary", disabled=(uploaded_file is None))
-if not uploaded_file:
-    st.caption("Cargue una tomografía para habilitar la predicción.")
+# ---------------------------------------------
+# 🔢 TRANSFORMACIÓN
+# ---------------------------------------------
+to_int = lambda x: 1 if x == "Sí" else 0
 
+# ---------------------------------------------
+# 🚀 BOTÓN
+# ---------------------------------------------
+st.markdown("---")
 
-# Llamar backend y visualizar resultados
-if predict_btn and uploaded_file:
-    
-  # Calcular STRESS_INMUNE automáticamente
-  stress_immune_calc = 1 if (stress == 1 and immune == 1) else 0
+if st.button("Analizar Riesgo Híbrido", use_container_width=True):
 
-  # Construir JSON clínico
-  clinical_dict = {
-    "AGE": age, "GENDER": gender, "SMOKING": smoking,
-    "FINGER_DISCOLORATION": finger, "MENTAL_STRESS": stress,
-    "EXPOSURE_TO_POLLUTION": pollution, "LONG_TERM_ILLNESS": chronic,
-    "ENERGY_LEVEL": energy, "IMMUNE_WEAKNESS": immune,
-    "BREATHING_ISSUE": breathing, "ALCOHOL_CONSUMPTION": alcohol,
-    "THROAT_DISCOMFORT": throat, "OXYGEN_SATURATION": oxygen,
-    "CHEST_TIGHTNESS": chest, "FAMILY_HISTORY": family_history,
-    "SMOKING_FAMILY_HISTORY": smoking_family, "STRESS_IMMUNE": stress_immune_calc
-  }
-
-  with st.spinner("Calculando riesgo y generando explicación..."):
-    try:
-        files = {"tomografia": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-        data = {"clinical_data": json.dumps(clinical_dict)}
-        resp = requests.post(BACKEND_URL, files=files, data=data, timeout=30)
-        resp.raise_for_status()
-        result = resp.json()
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
-        st.stop()
-
-  # Mostrar resultado
-  riesgo = result["riesgo_final"]
-  clasif = result["clasificacion"]
-
-  # Tarjeta de resultado
-  st.markdown("##Resultado del Diagnóstico")
-  col_center = st.columns([1,2,1])
-  with col_center[1]:
-    # Semáforo
-    if riesgo >= 0.7:
-        color, icono = "#e74c3c", "🔴"
-    elif riesgo >= 0.5:
-        color, icono = "#e67e22", "🟠"
-    elif riesgo >= 0.3:
-        color, icono = "#f1c40f", "🟡"
+    if not ct_file:
+        st.error("Sube una tomografía primero.")
     else:
-        color, icono = "#27ae60", "🟢"
+        with st.spinner("Analizando con IA..."):
 
-    st.markdown(f"<div class='result-card'>"
-                f"<div style='font-size:4rem'>{icono}</div>"
-                f"<div style='font-size:2.5rem; font-weight:700; color:{color}'>{riesgo*100:.1f}%</div>"
-                f"<div style='font-size:1.3rem; font-weight:600; color:{color}'>{clasif}</div>"
-                f"</div>", unsafe_allow_html=True)
+            payload = {
+                "age": age,
+                "gender": gender_val,
+                "smoking": to_int(smoking),
+                "finger_discoloration": to_int(finger),
+                "mental_stress": to_int(stress),
+                "exposure_to_pollution": to_int(pollution),
+                "long_term_illness": to_int(illness),
+                "energy_level": to_int(energy),
+                "immune_weakness": to_int(immune),
+                "breathing_issue": to_int(breathing),
+                "alcohol_consumption": to_int(alcohol),
+                "throat_discomfort": to_int(throat),
+                "oxygen_saturation": oxygen,
+                "chest_tightness": to_int(chest),
+                "family_history": to_int(family),
+                "smoking_family_history": to_int(fam_smoke),
+            }
 
-  st.progress(float(riesgo))
+            files = {"file": (ct_file.name, ct_file, ct_file.type)}
 
-  # Desglose por modelo
-  st.subheader("Desglose por modelo")
-  col1, col2 = st.columns(2)
-  with col1:
-      st.metric("Modelo ML", f"{result['probabilidad_ml']*100:.1f}%")
-      st.progress(float(result["probabilidad_ml"]))
-  with col2:
-      dl_badge = " (placeholder)" if not result["dl_disponible"] else ""
-      st.metric(f"Modelo DL{dl_badge}", f"{result['probabilidad_dl']*100:.1f}%")
-      st.progress(float(result["probabilidad_dl"]))
-      if not result["dl_disponible"]:
-          st.caption("El valor del DL es simulado; será reemplazado por la CNN real.")
+            try:
+                resp = requests.post("http://127.0.0.1:8000/predict", data=payload, files=files)
 
-  # Explicación SHAP
-  shap_data = result.get("shap")
-  if shap_data:
-    st.subheader("Explicación del modelo clínico (SHAP)")
-    st.markdown("**Factores que más influyen en el riesgo** (contribuciones en log-odds)")
+                if resp.status_code == 200:
+                    res = resp.json()
 
-    tab1, tab2 = st.tabs(["Aumentan riesgo", "Disminuyen riesgo"])
+                    st.markdown("---")
+                    st.header("Resultados")
 
-    with tab1:
-      if shap_data["top_positivas"]:
-        df_pos = pd.DataFrame(shap_data["top_positivas"])
-        st.bar_chart(df_pos.set_index("feature")["contribucion"], color="#e74c3c")
-      else:
-        st.info("No hay factores con contribución positiva significativa.")
+                    col1, col2, col3 = st.columns(3)
 
-    with tab2:
-      if shap_data["top_negativas"]:
-        df_neg = pd.DataFrame(shap_data["top_negativas"])
-        # Invertir signo para que se vea como barras hacia abajo (positivo en gráfica = reduce riesgo)
-        df_neg["reduccion"] = -df_neg["contribucion"]
-        st.bar_chart(df_neg.set_index("feature")["reduccion"], color="#27ae60")
-      else:
-        st.info("No hay factores con contribución negativa significativa.")
+                    with col1:
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <h3>ML Clínico</h3>
+                            <div class="metric-value">{res['prob_ml']:.1%}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-    with st.expander("Interpretación"):
-      st.markdown("""
-      - Las barras **rojas** indican variables que aumentan la probabilidad de cáncer.
-      - Las barras **verdes** indican variables que la reducen.
-      - La magnitud refleja la importancia relativa en esta predicción concreta.
-      """)
-  else:
-      st.info("La explicación SHAP no está disponible (falta el archivo de medias de entrenamiento).")
+                    with col2:
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <h3>DL Tomografía</h3>
+                            <div class="metric-value">{res['prob_dl']:.1%}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-  # Explicación GRAD-CAM
-  gradcam = result.get("gradcam", {})
-  if gradcam:
-     st.subheader("Mapa de atención sobre la tomografía")
-     if gradcam.get("disponible"):
-        # Aquí se mostraría la imagen con overlay en la fase 2
-        st.image(gradcam.get("imagen_base64"), caption="Zonas de interés de la CNN")
-     else:
-        st.info(gradcam.get("mensaje", "Mapa de atención no disponible"))
+                    color = f"card-{res['risk_color']}"
 
-  # Recomendación clínica
-  if riesgo >= 0.7:
-      st.error("Riesgo alto: Se recomienda derivación urgente a oncología torácica y biopsia confirmatoria.")
-  elif riesgo >= 0.5:
-      st.warning("Riesgo moderado: Seguimiento estrecho, repetir tomografía en 3 meses y evaluación por especialistas.")
-  elif riesgo >= 0.3:
-      st.info("Riesgo bajo-moderado: Control anual y manejo de factores de riesgo modificables.")
-  else:
-      st.success("Riesgo bajo: Continuar con seguimiento de rutina según protocolo estándar.")
-  with st.expander("Respuesta completa del servidor"):
-      st.json(result)
+                    with col3:
+                        st.markdown(f"""
+                        <div class="metric-card {color}">
+                            <h3>Riesgo Final</h3>
+                            <div class="metric-value">{res['prob_final']:.1%}</div>
+                            <p><b>{res['risk_level']}</b></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # Explicabilidad
+                    st.markdown("---")
+                    st.header("🧠 Explicabilidad")
+
+                    e1, e2 = st.columns(2)
+
+                    with e1:
+                        st.subheader("SHAP")
+                        if res["shap_b64"]:
+                            st.markdown(f'<div class="explain-img"><img src="data:image/png;base64,{res["shap_b64"]}" width="100%"></div>', unsafe_allow_html=True)
+
+                    with e2:
+                        st.subheader("Grad-CAM")
+                        if res["gradcam_b64"]:
+                            st.markdown(f'<div class="explain-img"><img src="data:image/png;base64,{res["gradcam_b64"]}" width="100%"></div>', unsafe_allow_html=True)
+
+                else:
+                    st.error("Error del backend")
+
+            except:
+                st.error("No conecta con FastAPI")

@@ -3,7 +3,7 @@
 ## Requisitos
 
 - Python 3.9+
-- Carpeta `backend/exported_best_model/` con los artefactos del modelo ML.
+- Carpeta `backend/exported_best_model/` y archivo `best_ResNet18+LSTM.pth` con los artefactos del modelo ML.
 
 ## Instalación
 
@@ -24,11 +24,9 @@ Crear entornos virtuales
 cd backend
 python -m venv venv
 source venv/bin/activate # En Windows: venv\Scripts\activate
-pip install -r requirements.txt
 
 # Frontend (otra terminal)
 
 cd ../frontend
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
