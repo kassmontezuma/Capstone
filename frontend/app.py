@@ -1,268 +1,281 @@
 import streamlit as st
 import requests
 
-st.set_page_config(page_title="Diagnóstico Híbrido de Cáncer de Pulmón", layout="wide")
+st.set_page_config(
+    page_title="Diagnóstico de Cáncer de Pulmón",
+    layout="wide"
+)
 
-# ---------------------------------------------
-# CSS GLOBAL – Tema azul/celeste + blanco
-# ---------------------------------------------
+# ---------------------------------------------------
+# CSS
+# ---------------------------------------------------
+
 st.markdown("""
 <style>
 
-/* Fondo */
-.stApp {
-    background: linear-gradient(135deg, #0f2a44, #1e5f9e);
-    color: white;
-    font-family: 'Segoe UI', sans-serif;
+.stApp{
+    background: linear-gradient(135deg, #f0f4f8, #E5F6FF);
+    color:#00234B;
+    font-size: 18px;
 }
 
-/* Header */
-.main-title {
-    font-size: 40px;
-    font-weight: 700;
-    text-align: center;
+.main-title{
+    font-size:46px;
+    font-weight:800;
+    text-align:center;
     margin-bottom: 5px;
 }
 
-.subtitle {
-    text-align: center;
-    color: #cfe8ff;
-    margin-bottom: 10px;
+.subtitle{
+    font-size: 18px;
+    text-align:center;
+    color:#48658;
+    font-weight: 500;
+}
+            
+.stWidget label, [data-testid="stWidgetLabel"] p {
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    color: #00234B !important;
+    line-height: 1.4 !important;
 }
 
-/* Línea */
-hr {
-    border: none;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, #4da6ff, transparent);
-    margin: 10px 0;
+div[data-testid="stRadio"] div[role="radiogroup"] [data-testid="stMarkdownContainer"] p {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: #00234B !important;
+}
+            
+.metric-card{
+    background:rgba(255,255,255,0.08);
+    padding:25px;
+    border-radius:15px;
+    text-align:center;
 }
 
-/* Inputs */
+.metric-value{
+    font-size:34px;
+    font-weight:bold;
+}
+            
 .stNumberInput input {
-    background-color: white;
-    color: black;
-    border-radius: 8px;
+    font-size: 18px !important;
+    background-color: white !important;
+    border: 2px solid #bcccdc !important;
+    border-radius: 8px !important;
 }
-
-/* Radios */
-div[role="radiogroup"] {
-    background: rgba(255,255,255,0.05);
-    padding: 8px;
-    border-radius: 10px;
-}
-
-/* File uploader FIX */
-[data-testid="stFileUploader"] label {
-    display: block !important;
+            
+.stNumberInput button {
     color: white !important;
-    font-weight: 600;
-    margin-bottom: 10px;
+    background-color: #00234B !important;
 }
 
-[data-testid="stFileUploadDropzone"] {
-    border: 2px dashed #4da6ff;
+.upload-container {
+    background-color: white;
+    padding: 30px 20px;
     border-radius: 12px;
-    padding: 25px;
-    background: rgba(255,255,255,0.05);
-}
-
-[data-testid="stFileUploadDropzone"]:hover {
-    background: rgba(77,166,255,0.1);
-}
-
-/* Botón */
-.stButton button {
-    background: linear-gradient(90deg, #4da6ff, #1e90ff);
-    color: white;
-    border-radius: 10px;
-    height: 50px;
-    font-size: 16px;
-    font-weight: bold;
-    border: none;
-}
-
-.stButton button:hover {
-    background: linear-gradient(90deg, #1e90ff, #4da6ff);
-}
-
-/* Cards */
-.metric-card {
-    background: rgba(255,255,255,0.08);
-    padding: 20px;
-    border-radius: 15px;
+    border: 2px dashed #00234B;
     text-align: center;
-    backdrop-filter: blur(6px);
-    box-shadow: 0px 4px 15px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+}
+                          
+.stButton button{
+    background:#00234B;
+    color:white;
+    height:50px;
+    border-radius:10px;
+    font-size:20px;
+    font-weight:800px;
 }
 
-.metric-value {
-    font-size: 32px;
-    font-weight: bold;
+/* Estilo para el ícono de la nube */
+.upload-icon {
+    font-size: 55px;
+    color: #a0aec0;
+    margin-bottom: 10px;
+    display: block;
+    text-align: center;
 }
 
-.card-green { border: 2px solid #00c853; }
-.card-yellow { border: 2px solid #ffd600; }
-.card-red { border: 2px solid #ff5252; }
-
-/* Imágenes */
-.explain-img {
-    background: white;
-    padding: 10px;
-    border-radius: 10px;
+.upload-text-main {
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    color: #486581 !important;
 }
 
+[data-testid="stFileUploader"] {
+    background-color: white !important;
+    padding: 0px 20px 20px 20px !important;
+    border-bottom-left-radius: 12px !important;
+    border-bottom-right-radius: 12px !important;
+    border: 2px dashed #00234B !important;
+    border-top: none !important;
+}
+
+[data-testid="stFileUploaderDropzone"] button {
+    background-color: #00234B !important;
+    color: white !important;
+    border-radius: 8px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ---------------------------------------------
+# ---------------------------------------------------
 # HEADER
-# ---------------------------------------------
-st.markdown('<div class="main-title">Diagnóstico Híbrido de Cáncer de Pulmón</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Sistema clínico para la detección temprana de cáncer de pulmón</div>', unsafe_allow_html=True)
+# ---------------------------------------------------
 
-st.markdown("---")
-
-# ---------------------------------------------
-# FORMULARIO
-# ---------------------------------------------
-st.header("Datos Clínicos del Paciente")
-st.markdown("Ingrese los datos y síntomas del paciente")
-
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    age = st.number_input("Edad", 18, 120, 50)
-    gender = st.radio("Género", ["Femenino", "Masculino"], horizontal=True)
-    gender_val = 0 if gender == "Femenino" else 1
-    smoking = st.radio("Fuma", ["No", "Sí"], horizontal=True)
-    finger = st.radio("Decoloración de dedos", ["No", "Sí"], horizontal=True)
-
-with c2:
-    stress = st.radio("Estrés mental", ["No", "Sí"], horizontal=True)
-    pollution = st.radio("Exposición a contaminación", ["No", "Sí"], horizontal=True)
-    illness = st.radio("Enfermedad crónica", ["No", "Sí"], horizontal=True)
-    energy = st.radio("Bajo nivel de energía", ["No", "Sí"], horizontal=True)
-
-with c3:
-    immune = st.radio("Debilidad inmunológica", ["No", "Sí"], horizontal=True)
-    breathing = st.radio("Dificultad respiratoria", ["No", "Sí"], horizontal=True)
-    alcohol = st.radio("Consumo de alcohol", ["No", "Sí"], horizontal=True)
-    throat = st.radio("Malestar de garganta", ["No", "Sí"], horizontal=True)
-
-with c4:
-    oxygen = st.number_input("Saturación O₂ (%)", 50.0, 100.0, 98.0)
-    chest = st.radio("Opresión en el pecho", ["No", "Sí"], horizontal=True)
-    family = st.radio("Historial familiar", ["No", "Sí"], horizontal=True)
-    fam_smoke = st.radio("Fumador pasivo familiar", ["No", "Sí"], horizontal=True)
-
-# ---------------------------------------------
-# 🫁 TOMOGRAFÍA
-# ---------------------------------------------
-st.markdown("---")
-st.header("Tomografía Computarizada")
-
-ct_file = st.file_uploader(
-    "Seleccione la imagen de la tomografía",
-    type=["png", "jpg", "jpeg"]
+st.markdown(
+    '<div class="main-title">Diagnóstico de Cáncer de Pulmón</div>',
+    unsafe_allow_html=True
 )
 
-# ---------------------------------------------
-# 🔢 TRANSFORMACIÓN
-# ---------------------------------------------
-to_int = lambda x: 1 if x == "Sí" else 0
+st.markdown(
+    '<div class="subtitle">Modelo de Machine Learning basado en datos clínicos</div>',
+    unsafe_allow_html=True
+)
 
-# ---------------------------------------------
-# 🚀 BOTÓN
-# ---------------------------------------------
 st.markdown("---")
 
-if st.button("Analizar Riesgo Híbrido", use_container_width=True):
+# ---------------------------------------------------
+# FORMULARIO
+# ---------------------------------------------------
 
-    if not ct_file:
-        st.error("Sube una tomografía primero.")
-    else:
-        with st.spinner("Analizando con IA..."):
+col_formulario, col_tomografia = st.columns([2.2, 1.2], gap="large")
 
-            payload = {
-                "age": age,
-                "gender": gender_val,
-                "smoking": to_int(smoking),
-                "finger_discoloration": to_int(finger),
-                "mental_stress": to_int(stress),
-                "exposure_to_pollution": to_int(pollution),
-                "long_term_illness": to_int(illness),
-                "energy_level": to_int(energy),
-                "immune_weakness": to_int(immune),
-                "breathing_issue": to_int(breathing),
-                "alcohol_consumption": to_int(alcohol),
-                "throat_discomfort": to_int(throat),
-                "oxygen_saturation": oxygen,
-                "chest_tightness": to_int(chest),
-                "family_history": to_int(family),
-                "smoking_family_history": to_int(fam_smoke),
-            }
+with col_formulario:
+    st.subheader("Datos del paciente")
+    
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        age = st.number_input("Edad", 18, 120, 50)
+        gender = st.radio("Género", ["Femenino", "Masculino"], horizontal=True)
+        smoking = st.radio("Fuma", ["No", "Sí"], horizontal=True)
+        finger = st.radio("Decoloración de dedos", ["No", "Sí"], horizontal=True)
 
-            files = {"file": (ct_file.name, ct_file, ct_file.type)}
+    with c2:
+        stress = st.radio("Estrés mental", ["No", "Sí"], horizontal=True)
+        pollution = st.radio("Exposición a contaminación", ["No", "Sí"], horizontal=True)
+        illness = st.radio("Enfermedad crónica", ["No", "Sí"], horizontal=True)
+        energy = st.number_input("Nivel de energía", 0.0, 100.0, 75.0)
 
-            try:
-                resp = requests.post("http://127.0.0.1:8000/predict", data=payload, files=files)
+    with c3:
+        immune = st.radio("Debilidad inmunológica", ["No", "Sí"], horizontal=True)
+        breathing = st.radio("Dificultad respiratoria", ["No", "Sí"], horizontal=True)
+        alcohol = st.radio("Consumo de alcohol", ["No", "Sí"], horizontal=True)
+        throat = st.radio("Malestar de garganta", ["No", "Sí"], horizontal=True)
 
-                if resp.status_code == 200:
-                    res = resp.json()
+    st.markdown("<br>", unsafe_allow_html=True)
+    c_bottom1, c_bottom2, c_bottom3 = st.columns(3)
+    with c_bottom1:
+        oxygen = st.number_input("Saturación O₂", 50.0, 100.0, 98.0)
+    with c_bottom2:
+        chest = st.radio("Opresión en el pecho", ["No", "Sí"], horizontal=True)
+    with c_bottom3:
+        family = st.radio("Historial familiar", ["No", "Sí"], horizontal=True)
+        fam_smoke = st.radio("Fumador pasivo familiar", ["No", "Sí"], horizontal=True)
 
-                    st.markdown("---")
-                    st.header("Resultados")
+with col_tomografia:
+    st.subheader("Subir Archivos")
+    
+    st.markdown('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">', unsafe_allow_html=True)
+    
+    # Cabecera visual del contenedor
+    st.markdown("""
+        <div style="background-color: white; padding: 30px 20px 0px 20px; border-top-left-radius: 12px; border-top-right-radius: 12px; border: 2px dashed #00234B; border-bottom: none; text-align: center;">
+            <i class="bi bi-cloud-upload upload-icon"></i>
+            <div class="upload-text-main">Drag and drop files here</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Cargador nativo integrado
+    uploaded_file = st.file_uploader(
+        "Label oculto", 
+        type=["dcm", "zip"], 
+        label_visibility="collapsed"
+    )
+    
+    if uploaded_file is not None:
+        st.success(f"¡Cargado: {uploaded_file.name}!")
 
-                    col1, col2, col3 = st.columns(3)
+# ---------------------------------------------------
+# Conversión Sí/No
+# ---------------------------------------------------
 
-                    with col1:
-                        st.markdown(f"""
-                        <div class="metric-card">
-                            <h3>ML Clínico</h3>
-                            <div class="metric-value">{res['prob_ml']:.1%}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+to_int = lambda x: 1 if x == "Sí" else 0
 
-                    with col2:
-                        st.markdown(f"""
-                        <div class="metric-card">
-                            <h3>DL Tomografía</h3>
-                            <div class="metric-value">{res['prob_dl']:.1%}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+gender_val = 1 if gender == "Masculino" else 0
 
-                    color = f"card-{res['risk_color']}"
+# ---------------------------------------------------
+# BOTÓN
+# ---------------------------------------------------
 
-                    with col3:
-                        st.markdown(f"""
-                        <div class="metric-card {color}">
-                            <h3>Riesgo Final</h3>
-                            <div class="metric-value">{res['prob_final']:.1%}</div>
-                            <p><b>{res['risk_level']}</b></p>
-                        </div>
-                        """, unsafe_allow_html=True)
+st.markdown("---")
 
-                    # Explicabilidad
-                    st.markdown("---")
-                    st.header("🧠 Explicabilidad")
+if st.button("Analizar Riesgo", use_container_width=True):
 
-                    e1, e2 = st.columns(2)
+    payload = {
 
-                    with e1:
-                        st.subheader("SHAP")
-                        if res["shap_b64"]:
-                            st.markdown(f'<div class="explain-img"><img src="data:image/png;base64,{res["shap_b64"]}" width="100%"></div>', unsafe_allow_html=True)
+        "AGE": age,
+        "GENDER": gender_val,
+        "SMOKING": to_int(smoking),
+        "FINGER_DISCOLORATION": to_int(finger),
+        "MENTAL_STRESS": to_int(stress),
+        "EXPOSURE_TO_POLLUTION": to_int(pollution),
+        "LONG_TERM_ILLNESS": to_int(illness),
+        "ENERGY_LEVEL": energy,
+        "IMMUNE_WEAKNESS": to_int(immune),
+        "BREATHING_ISSUE": to_int(breathing),
+        "ALCOHOL_CONSUMPTION": to_int(alcohol),
+        "THROAT_DISCOMFORT": to_int(throat),
+        "OXYGEN_SATURATION": oxygen,
+        "CHEST_TIGHTNESS": to_int(chest),
+        "FAMILY_HISTORY": to_int(family),
+        "SMOKING_FAMILY_HISTORY": to_int(fam_smoke)
 
-                    with e2:
-                        st.subheader("Grad-CAM")
-                        if res["gradcam_b64"]:
-                            st.markdown(f'<div class="explain-img"><img src="data:image/png;base64,{res["gradcam_b64"]}" width="100%"></div>', unsafe_allow_html=True)
+    }
 
-                else:
-                    st.error("Error del backend")
+    with st.spinner("Analizando..."):
 
-            except:
-                st.error("No conecta con FastAPI")
+        try:
+
+            response = requests.post(
+                "http://127.0.0.1:8000/predict",
+                json=payload
+            )
+
+            if response.status_code == 200:
+
+                res = response.json()
+
+                st.markdown("---")
+
+                st.header("Resultado")
+
+                c1, c2 = st.columns(2)
+
+                with c1:
+
+                    st.metric(
+                        "Probabilidad",
+                        f"{res['probability']:.2%}"
+                    )
+
+                with c2:
+
+                    if res["prediction"] == 1:
+
+                        st.error("Alto riesgo de cáncer de pulmón")
+
+                    else:
+
+                        st.success("Bajo riesgo de cáncer de pulmón")
+
+            else:
+
+                st.error("Error del servidor.")
+
+        except Exception as e:
+
+            st.error("No se pudo conectar con FastAPI.")
+            st.write(e)

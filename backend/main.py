@@ -1,253 +1,267 @@
-import io
 import os
-import base64
 import json
-import cv2
-import numpy as np
-import joblib
 import torch
-import torch.nn as nn
-import torchvision.models as models
-import torchvision.transforms as transforms
-from PIL import Image
-import matplotlib.pyplot as plt
-import shap
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+import joblib
+import pydicom
+import numpy as np
+import pandas as pd
+from pydantic import BaseModel
+from fastapi import UploadFile,FastAPI, File
 
-app = FastAPI(title="Lung Cancer Hybrid Diagnostic System")
 
-# ------------------------------------------------------------
-# 1. CARGA DEL MODELO ML (joblib)
-# ------------------------------------------------------------
+# =========================
+# APP
+# =========================
+app = FastAPI(title="Hybrid Lung Cancer Detection System")
+
+# =========================
+# LOAD ARTIFACTS
+# =========================
 ML_DIR = "backend/exported_best_model"
-ml_model = joblib.load(os.path.join(ML_DIR, "model.joblib"))
-scaler = joblib.load(os.path.join(ML_DIR, "scaler.joblib"))
-with open(os.path.join(ML_DIR, "feature_names.json"), "r") as f:
-    feature_names = json.load(f)
+model = joblib.load(f"{ML_DIR}/model.joblib")
+scaler = joblib.load(f"{ML_DIR}/scaler.joblib")
 
-# ------------------------------------------------------------
-# 2. ARQUITECTURA CORRECTA: ResNet18 + LSTM
-# ------------------------------------------------------------
-class ResNet18LSTM(nn.Module):
-    def __init__(self, lstm_hidden=128, num_layers=1, num_classes=1):
-        super().__init__()
-        resnet = models.resnet18(weights=None)
-        # Quitamos AvgPool y FC, dejamos los mapas de características (14x14)
-        self.features = nn.Sequential(*list(resnet.children())[:-2])
-        self.lstm = nn.LSTM(
-            input_size=512,
-            hidden_size=lstm_hidden,
-            num_layers=num_layers,
-            batch_first=True,
-        )
-        self.classifier = nn.Linear(lstm_hidden, num_classes)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        # x: (B,3,H,W) -> features: (B,512, H_f, W_f)
-        B, C, H, W = self.features(x).shape
-        x = self.features(x).view(B, C, H * W)   # (B, 512, L)
-        x = x.permute(0, 2, 1)                   # (B, L, 512)
-        lstm_out, (h_n, _) = self.lstm(x)
-        last_hidden = h_n[-1]                    # (B, hidden)
-        out = self.classifier(last_hidden)
-        return self.sigmoid(out).squeeze(1)
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-dl_model = ResNet18LSTM().to(DEVICE)
-DL_PATH = "backend/best_ResNet18+LSTM.pth"
-if os.path.exists(DL_PATH):
-    dl_model.load_state_dict(torch.load(DL_PATH, map_location=DEVICE))
+DL_PATH = "backend/exported_best_model/best_ResNet18_LSTM.pth"
+dl_model = torch.load(DL_PATH, map_location="cpu")
 dl_model.eval()
 
-# ------------------------------------------------------------
-# 3. GRAD‑CAM
-# ------------------------------------------------------------
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.activations = None
-        self.gradients = None
-        target_layer.register_forward_hook(self.save_activation)
-        target_layer.register_full_backward_hook(self.save_gradient)
+THRESHOLD = 0.5
 
-    def save_activation(self, module, input, output):
-        self.activations = output.detach()
+# =========================
+# PATIENT INPUT
+# =========================
+class Patient(BaseModel):
+    AGE: float
+    GENDER: int
+    SMOKING: int
+    FINGER_DISCOLORATION: int
+    MENTAL_STRESS: int
+    EXPOSURE_TO_POLLUTION: int
+    LONG_TERM_ILLNESS: int
+    ENERGY_LEVEL: float
+    IMMUNE_WEAKNESS: int
+    BREATHING_ISSUE: int
+    ALCOHOL_CONSUMPTION: int
+    THROAT_DISCOMFORT: int
+    OXYGEN_SATURATION: float
+    CHEST_TIGHTNESS: int
+    FAMILY_HISTORY: int
+    SMOKING_FAMILY_HISTORY: int
 
-    def save_gradient(self, module, grad_in, grad_out):
-        self.gradients = grad_out[0].detach()
+with open(f"{ML_DIR}/feature_names.json") as f:
+    FEATURE_NAMES = json.load(f)
 
-    def __call__(self, x, class_idx=None):
-        self.model.zero_grad()
-        output = self.model(x)
-        if output.dim() == 1:
-            loss = output[0]
-        else:
-            loss = output[0, class_idx] if class_idx is not None else output[0, output.argmax().item()]
-        loss.backward()
-        weights = torch.mean(self.gradients, dim=(2, 3), keepdim=True)
-        cam = torch.sum(weights * self.activations, dim=1, keepdim=True)
-        cam = torch.relu(cam)
-        cam = cam - cam.min()
-        cam = cam / (cam.max() + 1e-8)
-        return cam.squeeze().cpu().numpy()
+with open(f"{ML_DIR}/top5_features.json") as f:
+    TOP5 = json.load(f)
 
-target_layer = dl_model.features[-1]   # Última capa de layer4
-grad_cam = GradCAM(dl_model, target_layer)
+with open(f"{ML_DIR}/metadata.json") as f:
+    metadata = json.load(f)
 
-# ------------------------------------------------------------
-# 4. UTILIDADES
-# ------------------------------------------------------------
-def preprocess_ct(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    orig = np.array(image)
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    tensor = transform(image).unsqueeze(0).to(DEVICE)
-    return orig, tensor
+# SOLO estas se escalan (igual que training)
+CONTINUOUS_COLS = ["ENERGY_LEVEL", "OXYGEN_SATURATION"]
 
-def compute_shap(ml_model, scaler, feature_vector):
-    """feature_vector: dict con las 17 variables, en el orden correcto"""
-    ordered = ["AGE", "GENDER", "SMOKING", "FINGER_DISCOLORATION", "MENTAL_STRESS",
-               "EXPOSURE_TO_POLLUTION", "LONG_TERM_ILLNESS", "ENERGY_LEVEL",
-               "IMMUNE_WEAKNESS", "BREATHING_ISSUE", "ALCOHOL_CONSUMPTION",
-               "THROAT_DISCOMFORT", "OXYGEN_SATURATION", "CHEST_TIGHTNESS",
-               "FAMILY_HISTORY", "SMOKING_FAMILY_HISTORY", "STRESS_IMMUNE"]
-    X = np.array([[feature_vector[k] for k in ordered]])
-    X_scaled = scaler.transform(X)
+print("Model loaded OK")
+print("Threshold:", THRESHOLD)
 
-    # Intentar TreeExplainer (modelos de árboles)
-    try:
-        explainer = shap.TreeExplainer(ml_model)
-        shap_vals = explainer.shap_values(X_scaled)
-        if isinstance(shap_vals, list):
-            shap_vals = shap_vals[1]  # clase positiva
-    except:
-        # Fallback a KernelExplainer
-        def predict_fn(x):
-            return ml_model.predict_proba(x)[:, 1]
-        background = np.random.randn(100, X_scaled.shape[1])
-        explainer = shap.KernelExplainer(predict_fn, background, link="logit")
-        shap_vals = explainer.shap_values(X_scaled, nsamples=200)
 
-    expected = explainer.expected_value
-    if isinstance(expected, list):
-        expected = expected[1]
+# =========================
+# FEATURE ENGINEERING
+# =========================
+def build_features(df: pd.DataFrame):
 
-    plt.figure()
-    shap.plots.waterfall(
-        shap.Explanation(values=shap_vals[0],
-                         base_values=expected,
-                         data=X_scaled[0],
-                         feature_names=ordered),
-        max_display=10,
-        show=False,
+    df = df.copy()
+
+    # Variable derivada utilizada durante el entrenamiento
+    df["STRESS_IMMUNE"] = (
+        (df["MENTAL_STRESS"] == 1) &
+        (df["IMMUNE_WEAKNESS"] == 1)
+    ).astype(int)
+
+    # Interacciones del Top 5
+    for i in range(len(TOP5)):
+        for j in range(i + 1, len(TOP5)):
+            a = TOP5[i]
+            b = TOP5[j]
+            df[f"{a}_x_{b}"] = df[a] * df[b]
+
+    return df
+
+# =========================
+# PREPROCESS
+# =========================
+def preprocess(patient: dict):
+
+    df = pd.DataFrame([patient])
+
+    # mismas interacciones del entrenamiento
+    df = build_features(df)
+
+    # agregar columnas faltantes
+    for col in FEATURE_NAMES:
+        if col not in df.columns:
+            df[col] = 0
+
+    # mismo orden que entrenamiento
+    df = df[FEATURE_NAMES]
+
+    # Escalar únicamente las variables continuas
+    df[CONTINUOUS_COLS] = scaler.transform(
+        df[CONTINUOUS_COLS]
     )
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png", dpi=150)
-    plt.close()
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode()
 
-def compute_gradcam_overlay(original_np, cam):
-    cam_resized = cv2.resize(cam, (original_np.shape[1], original_np.shape[0]))
-    heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-    overlay = cv2.addWeighted(original_np, 0.6, heatmap, 0.4, 0)
-    pil_img = Image.fromarray(overlay)
-    buf = io.BytesIO()
-    pil_img.save(buf, format="PNG")
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode()
+    return df
 
-# ------------------------------------------------------------
-# 5. ENDPOINT
-# ------------------------------------------------------------
+# =========================
+# PREDICT
+# =========================
+def predict_ml(patient: dict):
+
+    X = preprocess(patient)
+
+    proba = model.predict_proba(X)[0][1]
+    pred = int(proba >= THRESHOLD)
+
+    # DEBUG (opcional)
+    print("\n====================")
+    print("INPUT:", patient)
+    print("PROBA:", proba)
+    print("PRED:", pred)
+
+    return float(proba), pred
+
+
+
+
+
+# =========================
+# MIL + SLIDING WINDOW
+# =========================
+def sliding_window(volume, size=64, stride=48):
+
+    D, H, W = volume.shape
+    patches = []
+
+    for z in range(0, D - size + 1, stride):
+        for y in range(0, H - size + 1, stride):
+            for x in range(0, W - size + 1, stride):
+
+                patch = volume[z:z+size, y:y+size, x:x+size]
+
+                if patch.shape == (size, size, size):
+                    patches.append(patch)
+
+    return patches
+
+def predict_dl_volume(volume, model):
+
+    model.eval()
+
+    probs = []
+    patches = sliding_window(volume)
+
+    with torch.no_grad():
+
+        for p in patches:
+
+            x = torch.tensor(p, dtype=torch.float32)
+            x = x.unsqueeze(0).unsqueeze(0)  # [1,1,64,64,64]
+
+            out = model(x)
+            prob = torch.sigmoid(out).item()
+
+            probs.append(prob)
+
+    return probs
+
+def mil_pooling(probs, k=5):
+
+    if len(probs) == 0:
+        return 0.0
+
+    probs_sorted = sorted(probs, reverse=True)
+
+    topk = probs_sorted[:k]
+
+    return sum(topk) / len(topk)
+
+# =========================
+# LATE FUSION
+# =========================
+def late_fusion(ml_prob, dl_prob, alpha=0.5):
+
+    return alpha * ml_prob + (1 - alpha) * dl_prob
+
+# =========================
+# LOAD DICOM
+# =========================
+def load_dicom_series(folder_path):
+
+    slices = []
+
+    for f in os.listdir(folder_path):
+        if f.endswith(".dcm"):
+            slices.append(pydicom.dcmread(os.path.join(folder_path, f)))
+
+    slices.sort(key=lambda x: getattr(x, "InstanceNumber", 0))
+
+    volume = np.stack([s.pixel_array for s in slices])
+
+    volume = volume.astype(np.float32)
+
+    return volume
+
+# =========================
+# ENDPOINTS
+# =========================
 @app.post("/predict")
-async def predict(
-    age: float = Form(...),
-    gender: int = Form(...),
-    smoking: int = Form(...),
-    finger_discoloration: int = Form(...),
-    mental_stress: int = Form(...),
-    exposure_to_pollution: int = Form(...),
-    long_term_illness: int = Form(...),
-    energy_level: float = Form(...),
-    immune_weakness: int = Form(...),
-    breathing_issue: int = Form(...),
-    alcohol_consumption: int = Form(...),
-    throat_discomfort: int = Form(...),
-    oxygen_saturation: float = Form(...),
-    chest_tightness: int = Form(...),
-    family_history: int = Form(...),
-    smoking_family_history: int = Form(...),
-    file: UploadFile = File(...),
-):
-    # Cálculo interno de STRESS_IMMUNE
-    stress_immune = 1 if (mental_stress == 1 and immune_weakness == 1) else 0
+def predict_route(patient: Patient):
 
-    features = {
-        "AGE": age,
-        "GENDER": gender,
-        "SMOKING": smoking,
-        "FINGER_DISCOLORATION": finger_discoloration,
-        "MENTAL_STRESS": mental_stress,
-        "EXPOSURE_TO_POLLUTION": exposure_to_pollution,
-        "LONG_TERM_ILLNESS": long_term_illness,
-        "ENERGY_LEVEL": energy_level,
-        "IMMUNE_WEAKNESS": immune_weakness,
-        "BREATHING_ISSUE": breathing_issue,
-        "ALCOHOL_CONSUMPTION": alcohol_consumption,
-        "THROAT_DISCOMFORT": throat_discomfort,
-        "OXYGEN_SATURATION": oxygen_saturation,
-        "CHEST_TIGHTNESS": chest_tightness,
-        "FAMILY_HISTORY": family_history,
-        "SMOKING_FAMILY_HISTORY": smoking_family_history,
-        "STRESS_IMMUNE": stress_immune,
+    prob, pred = predict_ml(patient.model_dump())
+
+    return {
+        "probability": round(prob, 4),
+        "prediction": pred,
+        "risk": "High" if pred == 1 else "Low",
+        "threshold": THRESHOLD
     }
 
-    # ML
-    ordered_keys = list(features.keys())
-    X_ml = np.array([[features[k] for k in ordered_keys]])
-    X_scaled = scaler.transform(X_ml)
-    prob_ml = ml_model.predict_proba(X_scaled)[0, 1]
+@app.post("/predict-dl")
+def predict_dl_ct_endpoint(folder_path: str):
 
-    # DL
-    image_bytes = await file.read()
-    original_np, img_tensor = preprocess_ct(image_bytes)
-    with torch.no_grad():
-        prob_dl = dl_model(img_tensor).item()
+    volume = load_dicom_series(folder_path)
 
-    # Fusión
-    prob_final = 0.5 * prob_ml + 0.5 * prob_dl
-    if prob_final < 0.5:
-        risk_level, risk_color = "Bajo Riesgo de cáncer de pulmón. Se recomienda seguimiento rutinario y control preventivo.", "verde"
-    elif 0.5 <= prob_final <= 0.7:
-        risk_level, risk_color = "Riesgo Moderado de cáncer de pulmón. Se recomienda evaluación médica adicional, pruebas complementarias y seguimiento cercano.", "amarillo"
-    else:
-        risk_level, risk_color = "Alta probabilidad de cáncer de pulmón. Se recomienda atención atención médica urgente, estudios diagnósticos avanzados y valoración por especialista.", "rojo"
+    patch_probs = predict_dl_volume(volume, dl_model)
 
-    # Explicabilidad
-    shap_b64 = compute_shap(ml_model, scaler, features)
-    cam = grad_cam(img_tensor)
-    gradcam_b64 = compute_gradcam_overlay(original_np, cam)
+    patient_prob = mil_pooling(patch_probs)
 
-    return JSONResponse({
-        "prob_ml": float(prob_ml),
-        "prob_dl": float(prob_dl),
-        "prob_final": float(prob_final),
-        "risk_level": risk_level,
-        "risk_color": risk_color,
-        "shap_b64": shap_b64,
-        "gradcam_b64": gradcam_b64,
-    })
+    return {
+        "dl_probability": patient_prob,
+        "num_patches": len(patch_probs),
+        "risk": "High" if patient_prob > THRESHOLD else "Low"
+    }
 
+@app.post("/predict-hybrid")
+def predict_hybrid(patient: Patient, folder_path: str):
+
+    ml_prob, _ = predict_ml(patient.model_dump())
+
+    volume = load_dicom_series(folder_path)
+    patch_probs = predict_dl_volume(volume, dl_model)
+    dl_prob = mil_pooling(patch_probs)
+
+    final = late_fusion(ml_prob, dl_prob)
+
+    return {
+        "ml_probability": ml_prob,
+        "dl_probability": dl_prob,
+        "final_probability": final,
+        "risk": "High" if final > THRESHOLD else "Low"
+    }
+
+
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
