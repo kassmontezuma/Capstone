@@ -213,7 +213,7 @@ with col_tomografia:
                 }
 
                 response = requests.post(
-                    "https://mi-api-cancer.onrender.com/predict",
+                    "https://capstone-3crx.onrender.com/predict",
                     data=payload,
                     files=files
                 )
