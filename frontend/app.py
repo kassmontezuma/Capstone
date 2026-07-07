@@ -213,7 +213,7 @@ with col_tomografia:
                 }
 
                 response = requests.post(
-                    "http://127.0.0.1:8000/predict",
+                    "https://mi-api-cancer.onrender.com/predict",
                     data=payload,
                     files=files
                 )

@@ -1,0 +1,11 @@
+fastapi
+python-multipart
+uvicorn
+opencv-python-headless
+joblib
+pydicom
+numpy
+pandas
+torch
+torchvision
+shap

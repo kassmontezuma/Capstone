@@ -23,7 +23,7 @@ import base64
 app = FastAPI(title="Hybrid Lung Cancer Detection System")
 
 # LOAD ARTIFACTS
-ML_DIR = "backend/exported_best_model"
+ML_DIR = "exported_best_model"
 model = joblib.load(f"{ML_DIR}/model.joblib")
 scaler = joblib.load(f"{ML_DIR}/scaler.joblib")
 # Extraer el CatBoost del pipeline
@@ -34,7 +34,7 @@ explainer = shap.TreeExplainer(cat_model)
 THRESHOLD = 0.5
 
 # LOAD DL MODEL
-DL_PATH = "backend/exported_best_model/best_ResNet18_LSTM.pth"
+DL_PATH = "exported_best_model/best_ResNet18_LSTM.pth"
 DEVICE = torch.device("cpu")
 
 #ARQUITECTURA RESNET18+LSTM
