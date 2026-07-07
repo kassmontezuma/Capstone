@@ -1,11 +1,17 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
-python-multipart
 uvicorn
+python-multipart
 opencv-python-headless
 joblib
 pydicom
 numpy
 pandas
-torch
-torchvision
+
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
+
+scikit-learn
+imbalanced-learn
 shap
