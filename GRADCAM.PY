@@ -31,8 +31,6 @@ cat_model = model.named_steps["model"]
 # SHAP trabaja sobre el modelo, no sobre el Pipeline
 explainer = shap.TreeExplainer(cat_model)
 
-THRESHOLD = 0.5
-
 # LOAD DL MODEL
 DL_PATH = "backend/exported_best_model/best_ResNet18_LSTM.pth"
 DEVICE = torch.device("cpu")
@@ -330,13 +328,10 @@ def preprocess_ml(patient: dict):
 
 # PREDICT ML
 def predict_ml(patient: dict):
-
     X = preprocess_ml(patient)
-
     proba = model.predict_proba(X)[0][1]
-    pred = int(proba >= THRESHOLD)
+    return float(proba)
 
-    return float(proba), pred
 #SHAP
 def explain_ml(patient):
     X = preprocess_ml(patient)
@@ -406,6 +401,19 @@ def predict_dl(folder_path: str):
                     output = dl_model(sequence)
                     cams, best_slice = gradcam.generate(output, seq_len=sequence.shape[1])
 
+                    patch_start_z = z - 32
+
+                    slice_indices = np.linspace(
+                        0,
+                        63,
+                        sequence.shape[1]
+                    ).astype(int)
+
+                    absolute_slice = patch_start_z + slice_indices[best_slice]
+
+                    x_volume = x
+                    y_volume = y
+
                     overlay = overlay_gradcam(
                         original_images[best_slice],
                         cams[best_slice]
@@ -414,10 +422,23 @@ def predict_dl(folder_path: str):
                     overlay_b64 = image_to_base64(overlay)
 
                     detections.append({
-                        "z": z,
-                        "y": y,
-                        "x": x,
-                        "prob": float(prob),
+
+                        "probability": float(prob),
+
+                        # Coordenadas en la tomografía
+                        "tomography_coordinates": {
+                            "slice": int(absolute_slice),
+                            "x": int(x_volume),
+                            "y": int(y_volume)
+                        },
+
+                        # Centro del patch analizado
+                        "patch_coordinates": {
+                            "z": int(z),
+                            "x": int(x),
+                            "y": int(y)
+                        },
+
                         "gradcam": overlay_b64
                     })
 
@@ -473,7 +494,7 @@ async def predict_route(
         "SMOKING_FAMILY_HISTORY": SMOKING_FAMILY_HISTORY
     }
 
-    ml_prob, _ = predict_ml(patient)
+    ml_prob = predict_ml(patient)
     shap_explanation = explain_ml(patient)
     temp_dir = tempfile.mkdtemp()
 
@@ -505,13 +526,29 @@ async def predict_route(
         dl_prob, detections = predict_dl(dicom_folder)
 
         final_prob = late_fusion(ml_prob, dl_prob)
-        prediction = int(final_prob >= THRESHOLD)
+        prediction = int(final_prob >= 0.5)
+
+        if final_prob >= 0.7:
+            risk_level = "Alto riesgo"
+            risk_color = "rojo"
+
+        elif final_prob >= 0.5:
+            risk_level = "Riesgo moderado"
+            risk_color = "amarillo"
+
+        else:
+            risk_level = "Bajo riesgo"
+            risk_color = "verde"
+
 
         return {
             "ml_probability": round(ml_prob,4),
             "dl_probability": round(dl_prob,4),
             "final_probability": round(final_prob,4),
-            "prediction": prediction,
+
+            "risk_level": risk_level,
+            "risk_color": risk_color,
+
             "detections": detections,
             "shap": shap_explanation
         }
@@ -520,7 +557,12 @@ async def predict_route(
         return {"error": "ZIP inválido"}
 
     except Exception as e:
-        return {"error": str(e)}
+        import traceback
+        traceback.print_exc()
+
+        return {
+            "error": str(e)
+        }
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

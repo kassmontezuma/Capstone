@@ -1,15 +1,20 @@
 import streamlit as st
 import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import base64
+from PIL import Image 
+from io import BytesIO
 
 st.set_page_config(
-    page_title="Diagnóstico de Cáncer de Pulmón",
+    page_title="Lung Cancer Diagnosis",
     layout="wide"
 )
 
 # ---------------------------------------------------
 # CSS
 # ---------------------------------------------------
-
+st.markdown('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">', unsafe_allow_html=True)
 st.markdown("""
 <style>
 
@@ -34,14 +39,14 @@ st.markdown("""
 }
             
 .stWidget label, [data-testid="stWidgetLabel"] p {
-    font-size: 16px !important;
+    font-size: 20px !important;
     font-weight: 600 !important;
     color: #00234B !important;
     line-height: 1.4 !important;
 }
 
 div[data-testid="stRadio"] div[role="radiogroup"] [data-testid="stMarkdownContainer"] p {
-    font-size: 14px !important;
+    font-size: 20px !important;
     font-weight: 500 !important;
     color: #00234B !important;
 }
@@ -59,7 +64,7 @@ div[data-testid="stRadio"] div[role="radiogroup"] [data-testid="stMarkdownContai
 }
             
 .stNumberInput input {
-    font-size: 18px !important;
+    font-size: 20px !important;
     background-color: white !important;
     border: 2px solid #bcccdc !important;
     border-radius: 8px !important;
@@ -69,54 +74,34 @@ div[data-testid="stRadio"] div[role="radiogroup"] [data-testid="stMarkdownContai
     color: white !important;
     background-color: #00234B !important;
 }
-
-.upload-container {
-    background-color: white;
-    padding: 30px 20px;
-    border-radius: 12px;
-    border: 2px dashed #00234B;
-    text-align: center;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-}
-                          
-.stButton button{
-    background:#00234B;
-    color:white;
-    height:50px;
-    border-radius:10px;
-    font-size:20px;
-    font-weight:800px;
+            
+.stButton > button {
+    background:#00234B !important;
+    color:white !important;
+    height:65px !important;
+    border-radius:10px !important;
 }
 
-/* Estilo para el ícono de la nube */
-.upload-icon {
-    font-size: 55px;
-    color: #a0aec0;
-    margin-bottom: 10px;
-    display: block;
-    text-align: center;
+.stButton > button div[data-testid="stMarkdownContainer"] {
+    font-size:28px !important; 
+    font-weight:800 !important;
+    margin:0 !important;
+}
+            
+div[data-testid="stFileUploader"] button {
+    background:#00234B !important;
+    color:white !important;
+    font-weight:bold !important;
+    border-radius:10px !important;
+    height:50px !important;
+    align-items:center !important;
+    justify-content:center !important;
+}
+            
+div[data-testid="stNumberInput"] {
+    max-width: 150px;  
 }
 
-.upload-text-main {
-    font-size: 16px !important;
-    font-weight: 600 !important;
-    color: #486581 !important;
-}
-
-[data-testid="stFileUploader"] {
-    background-color: white !important;
-    padding: 0px 20px 20px 20px !important;
-    border-bottom-left-radius: 12px !important;
-    border-bottom-right-radius: 12px !important;
-    border: 2px dashed #00234B !important;
-    border-top: none !important;
-}
-
-[data-testid="stFileUploaderDropzone"] button {
-    background-color: #00234B !important;
-    color: white !important;
-    border-radius: 8px !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -130,7 +115,7 @@ st.markdown(
 )
 
 st.markdown(
-    '<div class="subtitle">Modelo de Machine Learning basado en datos clínicos</div>',
+    '<div class="subtitle">Hybrid system based on predictive models for the early detection of lung cancer</div>',
     unsafe_allow_html=True
 )
 
@@ -143,60 +128,34 @@ st.markdown("---")
 col_formulario, col_tomografia = st.columns([2.2, 1.2], gap="large")
 
 with col_formulario:
-    st.subheader("Datos del paciente")
+    st.subheader("Patient details")
     
     c1, c2, c3 = st.columns(3)
-    
+
+    # Columna 1
     with c1:
         age = st.number_input("Edad", 18, 120, 50)
         gender = st.radio("Género", ["Femenino", "Masculino"], horizontal=True)
         smoking = st.radio("Fuma", ["No", "Sí"], horizontal=True)
         finger = st.radio("Decoloración de dedos", ["No", "Sí"], horizontal=True)
+        oxygen = st.number_input("Saturación O₂", 50.0, 100.0, 98.0)
 
+    # Columna 2
     with c2:
         stress = st.radio("Estrés mental", ["No", "Sí"], horizontal=True)
         pollution = st.radio("Exposición a contaminación", ["No", "Sí"], horizontal=True)
         illness = st.radio("Enfermedad crónica", ["No", "Sí"], horizontal=True)
         energy = st.number_input("Nivel de energía", 0.0, 100.0, 75.0)
+        chest = st.radio("Opresión en el pecho", ["No", "Sí"], horizontal=True)
 
+    # Columna 3
     with c3:
         immune = st.radio("Debilidad inmunológica", ["No", "Sí"], horizontal=True)
         breathing = st.radio("Dificultad respiratoria", ["No", "Sí"], horizontal=True)
         alcohol = st.radio("Consumo de alcohol", ["No", "Sí"], horizontal=True)
         throat = st.radio("Malestar de garganta", ["No", "Sí"], horizontal=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    c_bottom1, c_bottom2, c_bottom3 = st.columns(3)
-    with c_bottom1:
-        oxygen = st.number_input("Saturación O₂", 50.0, 100.0, 98.0)
-    with c_bottom2:
-        chest = st.radio("Opresión en el pecho", ["No", "Sí"], horizontal=True)
-    with c_bottom3:
         family = st.radio("Historial familiar", ["No", "Sí"], horizontal=True)
         fam_smoke = st.radio("Fumador pasivo familiar", ["No", "Sí"], horizontal=True)
-
-with col_tomografia:
-    st.subheader("Subir Archivos")
-    
-    st.markdown('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">', unsafe_allow_html=True)
-    
-    # Cabecera visual del contenedor
-    st.markdown("""
-        <div style="background-color: white; padding: 30px 20px 0px 20px; border-top-left-radius: 12px; border-top-right-radius: 12px; border: 2px dashed #00234B; border-bottom: none; text-align: center;">
-            <i class="bi bi-cloud-upload upload-icon"></i>
-            <div class="upload-text-main">Drag and drop files here</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # Cargador nativo integrado
-    uploaded_file = st.file_uploader(
-        "Label oculto", 
-        type=["dcm", "zip"], 
-        label_visibility="collapsed"
-    )
-    
-    if uploaded_file is not None:
-        st.success(f"¡Cargado: {uploaded_file.name}!")
 
 # ---------------------------------------------------
 # Conversión Sí/No
@@ -204,78 +163,274 @@ with col_tomografia:
 
 to_int = lambda x: 1 if x == "Sí" else 0
 
-gender_val = 1 if gender == "Masculino" else 0
 
-# ---------------------------------------------------
-# BOTÓN
-# ---------------------------------------------------
+with col_tomografia:
+    st.subheader("Load CT Scan")
+    uploaded_file = st.file_uploader(
+        "Label oculto", 
+        type=["zip"], 
+        label_visibility="collapsed"
+    )
+    if uploaded_file is not None:
+        st.success(f"¡Cargado: {uploaded_file.name}!")
+    
+    if st.button("Analizar Riesgo", width="stretch"):
+        if uploaded_file is None:
+            st.warning("Debe subir un archivo ZIP con la serie DICOM.")
+            st.stop()
 
-st.markdown("---")
+        payload = {
 
-if st.button("Analizar Riesgo", use_container_width=True):
+            "AGE": age,
+            "GENDER": 1 if gender == "Masculino" else 0,
+            "SMOKING": to_int(smoking),
+            "FINGER_DISCOLORATION": to_int(finger),
+            "MENTAL_STRESS": to_int(stress),
+            "EXPOSURE_TO_POLLUTION": to_int(pollution),
+            "LONG_TERM_ILLNESS": to_int(illness),
+            "ENERGY_LEVEL": energy,
+            "IMMUNE_WEAKNESS": to_int(immune),
+            "BREATHING_ISSUE": to_int(breathing),
+            "ALCOHOL_CONSUMPTION": to_int(alcohol),
+            "THROAT_DISCOMFORT": to_int(throat),
+            "OXYGEN_SATURATION": oxygen,
+            "CHEST_TIGHTNESS": to_int(chest),
+            "FAMILY_HISTORY": to_int(family),
+            "SMOKING_FAMILY_HISTORY": to_int(fam_smoke)
 
-    payload = {
+        }
 
-        "AGE": age,
-        "GENDER": gender_val,
-        "SMOKING": to_int(smoking),
-        "FINGER_DISCOLORATION": to_int(finger),
-        "MENTAL_STRESS": to_int(stress),
-        "EXPOSURE_TO_POLLUTION": to_int(pollution),
-        "LONG_TERM_ILLNESS": to_int(illness),
-        "ENERGY_LEVEL": energy,
-        "IMMUNE_WEAKNESS": to_int(immune),
-        "BREATHING_ISSUE": to_int(breathing),
-        "ALCOHOL_CONSUMPTION": to_int(alcohol),
-        "THROAT_DISCOMFORT": to_int(throat),
-        "OXYGEN_SATURATION": oxygen,
-        "CHEST_TIGHTNESS": to_int(chest),
-        "FAMILY_HISTORY": to_int(family),
-        "SMOKING_FAMILY_HISTORY": to_int(fam_smoke)
+        with st.spinner("Analizando..."):
 
-    }
+            try:
 
-    with st.spinner("Analizando..."):
+                files = {
+                    "dicom_zip": (
+                        uploaded_file.name,
+                        uploaded_file.getvalue(),
+                        "application/zip"
+                    )
+                }
 
-        try:
+                response = requests.post(
+                    "http://127.0.0.1:8000/predict",
+                    data=payload,
+                    files=files
+                )
+                print(response.status_code)
+                print(response.text)
 
-            response = requests.post(
-                "http://127.0.0.1:8000/predict",
-                json=payload
+                if response.status_code == 200:
+
+                    res = response.json()
+                    if "error" in res:
+                        st.error(res["error"])
+                        st.stop()
+
+                    st.session_state["resultado"] = res
+
+                else:
+                    st.error(f"Error {response.status_code}")
+
+                    try:
+                        st.json(response.json())
+                    except:
+                        st.write(response.text)
+
+            except Exception as e:
+
+                st.error("No se pudo conectar con FastAPI.")
+                st.write(e)
+
+if "resultado" in st.session_state:
+        st.markdown("---")
+        st.markdown("""
+        <h1 style='
+            text-align: center;
+            font-size:42px;
+            font-weight:800;
+            color:#00234B;
+        '>
+            Analysis results
+        </h1>
+        """, unsafe_allow_html=True)
+
+        res = st.session_state["resultado"]
+
+        if "error" in res:
+            st.error("Error en FastAPI:")
+            st.json(res)
+            st.stop()
+
+        st.markdown("### Probabilidades")
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric(
+            "ML",
+            f"{res['ml_probability']:.2%}"
+        )
+
+        c2.metric(
+            "DL",
+            f"{res['dl_probability']:.2%}"
+        )
+
+        c3.metric(
+            "Hybrid",
+            f"{res['final_probability']:.2%}"
+        )
+
+        # ==================================================
+        # Estado del paciente
+        # ==================================================
+
+        st.subheader("Diagnóstico")
+
+        if "risk_level" not in res:
+            st.error("Error en el análisis:")
+            st.json(res)
+            st.stop()
+
+        risk = res["risk_level"]
+
+
+        if risk == "Alto riesgo":
+
+            st.error(
+                "Alto riesgo de cáncer de pulmón"
             )
 
-            if response.status_code == 200:
+        elif risk == "Riesgo moderado":
 
-                res = response.json()
+            st.warning(
+                "Riesgo moderado de cáncer de pulmón"
+            )
 
-                st.markdown("---")
+        else:
 
-                st.header("Resultado")
+            st.success(
+                "Bajo riesgo de cáncer de pulmón"
+            )
 
-                c1, c2 = st.columns(2)
+        # ==================================================
+        # SHAP
+        # ==================================================
 
-                with c1:
+        st.subheader("Model Explanation (SHAP)")
 
-                    st.metric(
-                        "Probabilidad",
-                        f"{res['probability']:.2%}"
+        df_shap = pd.DataFrame(res["shap"])
+
+        df_shap["abs_shap"] = df_shap["shap"].abs()
+
+        df_shap = (
+            df_shap
+            .sort_values("abs_shap", ascending=False)
+        )
+
+        fig, ax = plt.subplots(
+            figsize=(11, 6)
+        )
+
+        colors = [
+            "#D62728" if x > 0 else "#1F77B4"
+            for x in df_shap["shap"]
+        ]
+
+        ax.barh(
+            df_shap["feature"],
+            df_shap["shap"],
+            color=colors
+        )
+
+        ax.invert_yaxis()
+
+        ax.axvline(
+            0,
+            color="black",
+            linewidth=1
+        )
+
+        ax.set_xlabel("SHAP Value")
+
+        ax.set_ylabel("Variables")
+
+        ax.set_title(
+            "Contribución de Variables al Diagnóstico"
+        )
+
+        plt.tight_layout()
+
+        st.pyplot(fig)
+
+        # ==================================================
+        # Tabla SHAP
+        # ==================================================
+
+        st.subheader(
+            "Variable details"
+        )
+
+        df_table = df_shap.drop(columns="abs_shap").copy()
+
+        df_table["value"] = df_table["value"].round(2)
+
+        df_table["shap"] = df_table["shap"].round(3)
+
+        st.dataframe(
+            df_table.rename(
+                columns={
+                    "feature":"Variable",
+                    "value":"Valor",
+                    "shap":"Impacto SHAP"
+                }
+            ),
+            width="stretch"
+        )
+
+        # ==================================================
+        # Deep Learning
+        # ==================================================
+
+        st.subheader(
+            "CT Detections"
+        )
+
+        st.metric(
+            "Regiones sospechosas",
+            len(res["detections"])
+        )
+
+        if len(res["detections"]) > 0:
+
+            detections_df = pd.DataFrame(
+                res["detections"]
+            )
+
+            st.dataframe(
+                detections_df,
+                width="stretch"
+            )
+    
+        res = st.session_state["resultado"]
+        detections = res.get("detections", [])
+
+        detections_df = pd.json_normalize(res["detections"])
+        cols = st.columns(3)
+        for i, det in enumerate(detections):
+            img = Image.open(
+                BytesIO(
+                    base64.b64decode(det["gradcam"])
+                )
+            )
+
+            with cols[i % 2]:
+                st.image(
+                    img,
+                    caption=(
+                        f"P={det['probability']:.2%}\n"
+                        f"Slice={det['tomography_coordinates']['slice']}\n"
+                        f"X={det['tomography_coordinates']['x']} "
+                        f"Y={det['tomography_coordinates']['y']}"
                     )
-
-                with c2:
-
-                    if res["prediction"] == 1:
-
-                        st.error("Alto riesgo de cáncer de pulmón")
-
-                    else:
-
-                        st.success("Bajo riesgo de cáncer de pulmón")
-
-            else:
-
-                st.error("Error del servidor.")
-
-        except Exception as e:
-
-            st.error("No se pudo conectar con FastAPI.")
-            st.write(e)
+                )
